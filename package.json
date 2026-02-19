@@ -1,0 +1,17 @@
+{
+  "name": "outreach-finder",
+  "version": "1.0.0",
+  "description": "CLI tool to find and organise guest post opportunities via Google Custom Search",
+  "main": "outreach-finder.js",
+  "bin": {
+    "outreach-finder": "./outreach-finder.js"
+  },
+  "scripts": {
+    "start": "node outreach-finder.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["outreach", "guest-post", "seo", "nootropics", "blogging"],
+  "license": "MIT"
+}

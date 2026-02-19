@@ -1,0 +1,11 @@
+# Niche keywords for outreach-finder
+# One per line. Lines starting with # are ignored.
+
+nootropics
+biohacking
+cognitive enhancement
+brain health
+supplements
+productivity optimization
+quantified self
+health optimization
