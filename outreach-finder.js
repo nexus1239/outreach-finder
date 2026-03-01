@@ -192,7 +192,7 @@ function deduplicateByHost(results) {
 }
 
 // ── WRITE CSV ─────────────────────────────────────────────────────────────────
-const CSV_COLS = ['site_name', 'url', 'contact_page', 'email', 'niche', 'status', 'notes'];
+const CSV_COLS = ['site_name', 'url', 'contact_page', 'email', 'niche', 'status', 'contacted', 'notes'];
 
 function toCsv(targets) {
   const escape = v => '"' + String(v || '').replace(/"/g, '""').replace(/\r?\n/g, ' ') + '"';
@@ -444,6 +444,7 @@ async function main() {
       email:        emails.join('; '),
       niche:        r.niche,
       status:       '',
+      contacted:    'No',
       notes,
     });
 
