@@ -24,6 +24,28 @@ function loadEnv() {
 // ── TIMING ────────────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// ── API QUOTA TRACKING ───────────────────────────────────────────────────────
+const API_DAILY_QUOTA   = parseInt(process.env.API_DAILY_QUOTA, 10) || 100;
+const API_REQUEST_DELAY = parseInt(process.env.API_REQUEST_DELAY, 10) || 2000; // ms between requests
+const QUOTA_WARN_THRESHOLD = 0.8; // warn at 80% usage
+
+let apiCallCount = 0;
+
+function checkQuota() {
+  if (apiCallCount >= API_DAILY_QUOTA) {
+    return { exhausted: true, warning: false };
+  }
+  const usage = apiCallCount / API_DAILY_QUOTA;
+  if (usage >= QUOTA_WARN_THRESHOLD) {
+    return { exhausted: false, warning: true, remaining: API_DAILY_QUOTA - apiCallCount };
+  }
+  return { exhausted: false, warning: false, remaining: API_DAILY_QUOTA - apiCallCount };
+}
+
+function trackApiCall() {
+  apiCallCount++;
+}
+
 // ── PROGRESS BAR ─────────────────────────────────────────────────────────────
 const COLS = () => process.stdout.columns || 100;
 
@@ -48,13 +70,13 @@ function log(msg) {
   console.log(msg);
 }
 
-// ── GOOGLE CUSTOM SEARCH ──────────────────────────────────────────────────────
-async function searchGoogle(query, apiKey, cseId) {
-  const url = 'https://www.googleapis.com/customsearch/v1?' + new URLSearchParams({
-    key: apiKey,
-    cx:  cseId,
-    q:   query,
-    num: 10,
+// ── SERPAPI SEARCH ────────────────────────────────────────────────────────────
+async function searchGoogle(query, apiKey) {
+  const url = 'https://serpapi.com/search?' + new URLSearchParams({
+    engine:  'google',
+    q:       query,
+    api_key: apiKey,
+    num:     10,
   });
 
   const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
@@ -62,13 +84,13 @@ async function searchGoogle(query, apiKey, cseId) {
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     let hint = '';
-    if (res.status === 403) hint = ' (API key invalid, quota exceeded, or Custom Search JSON API not enabled in Google Cloud)';
-    if (res.status === 400) hint = ' (bad request — check CSE ID)';
+    if (res.status === 401) hint = ' (invalid or expired SerpApi key)';
+    if (res.status === 429) hint = ' (SerpApi rate limit or quota exceeded)';
     throw new Error(`HTTP ${res.status}${hint}: ${body.slice(0, 240)}`);
   }
 
   const data = await res.json();
-  return (data.items || []).map(item => ({
+  return (data.organic_results || []).map(item => ({
     title:   item.title   || '',
     url:     item.link    || '',
     snippet: item.snippet || '',
@@ -338,12 +360,11 @@ Before hitting send on any template, confirm:
 async function main() {
   loadEnv();
 
-  const apiKey = process.env.GOOGLE_API_KEY;
-  const cseId  = process.env.GOOGLE_CSE_ID;
+  const apiKey = process.env.SERP_API_KEY;
 
-  if (!apiKey || !cseId) {
-    console.error('\n❌  Error: GOOGLE_API_KEY and GOOGLE_CSE_ID must be set in .env or environment.');
-    console.error('   Copy .env.example to .env and fill in your credentials.\n');
+  if (!apiKey) {
+    console.error('\n❌  Error: SERP_API_KEY must be set in .env or environment.');
+    console.error('   Copy .env.example to .env and fill in your SerpApi key.\n');
     process.exit(1);
   }
 
@@ -375,33 +396,55 @@ async function main() {
   console.log('\n🔍  Outreach Finder — Guest Post Opportunity Scanner');
   console.log('─'.repeat(54));
   console.log(`   Niches: ${niches.length}   Queries per niche: ${suffixes.length}   Total API calls: ${totalSearches}`);
-  console.log(`   Rate limit: 1 request / 2 s\n`);
+  console.log(`   Rate limit: 1 request / ${API_REQUEST_DELAY / 1000} s   Daily quota: ${API_DAILY_QUOTA}`);
+
+  if (totalSearches > API_DAILY_QUOTA) {
+    console.log(`   ⚠  Warning: ${totalSearches} queries exceeds daily quota of ${API_DAILY_QUOTA}. Will stop at quota limit.`);
+  }
+  console.log('');
 
   // ── PHASE 1: SEARCH ────────────────────────────────────────────────────────
   const rawResults = []; // {title, url, snippet, niche, query}
   let searchErrors = 0;
   let done = 0;
+  let quotaExhausted = false;
 
   for (const niche of niches) {
+    if (quotaExhausted) break;
     for (const suffix of suffixes) {
+      // Check quota before each API call
+      const quota = checkQuota();
+      if (quota.exhausted) {
+        clearLine();
+        log(`🛑  API quota exhausted (${API_DAILY_QUOTA}/${API_DAILY_QUOTA} calls used). Stopping search gracefully.`);
+        log(`   Completed ${done}/${totalSearches} searches. Process remaining results below.`);
+        quotaExhausted = true;
+        break;
+      }
+      if (quota.warning) {
+        log(`  ⚠  Approaching API quota limit: ${quota.remaining} calls remaining out of ${API_DAILY_QUOTA}`);
+      }
+
       const query = `${niche} ${suffix}`;
-      drawProgress(done, totalSearches, `Searching: ${query}`);
+      drawProgress(done, totalSearches, `Searching: ${query} (${apiCallCount}/${API_DAILY_QUOTA} API calls)`);
 
       try {
-        const results = await searchGoogle(query, apiKey, cseId);
+        const results = await searchGoogle(query, apiKey);
+        trackApiCall();
         for (const r of results) rawResults.push({ ...r, niche, query });
       } catch (err) {
+        trackApiCall();
         searchErrors++;
         log(`  ⚠  Search failed — "${query}": ${err.message}`);
       }
 
       done++;
-      if (done < totalSearches) await sleep(2000);
+      if (done < totalSearches) await sleep(API_REQUEST_DELAY);
     }
   }
 
   clearLine();
-  log(`✓  Phase 1 complete — ${rawResults.length} raw results, ${searchErrors} search error(s)`);
+  log(`✓  Phase 1 complete — ${rawResults.length} raw results, ${searchErrors} search error(s), ${apiCallCount} API calls used`);
 
   // ── DEDUPLICATE ────────────────────────────────────────────────────────────
   const unique = deduplicateByHost(rawResults);

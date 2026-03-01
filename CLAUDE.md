@@ -28,4 +28,4 @@ Reads niches from `niches.txt`, outputs structured data + CSV + pitch templates.
 
 ## API Limits
 
-Rate-limited: 1 request/2 seconds. 8 niches ≈ 10 minutes runtime.
+Rate-limited: configurable via `API_REQUEST_DELAY` env var (default: 2000ms). Daily quota tracked and enforced via `API_DAILY_QUOTA` env var (default: 100). Warns at 80% usage, stops gracefully at limit. 8 niches ≈ 10 minutes runtime.
